@@ -471,6 +471,20 @@ impl Nvenc {
     }
 }
 
+impl Drop for Nvenc {
+    /// Pictures still in flight (an export cancelled, or stopped by an error, before `flush`) are
+    /// drained before the session frees their buffers: the driver finishes them asynchronously,
+    /// and freeing their buffers first made it jump into freed memory (a crash in the driver as
+    /// the export's encoder was dropped, 2026-10-22).
+    fn drop(&mut self) {
+        if !self.pending.is_empty()
+            && let Err(e) = self.flush()
+        {
+            log::warn!("NVENC: draining the pictures in flight failed: {e}");
+        }
+    }
+}
+
 /// Copy planar 4:2:0 into an NV12 input buffer.
 fn fill_nv12(l: Locked<'_>, y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) {
     let pitch = l.pitch;
