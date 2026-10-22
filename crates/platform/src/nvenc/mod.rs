@@ -473,14 +473,33 @@ impl Nvenc {
 
 impl Drop for Nvenc {
     /// Pictures still in flight (an export cancelled, or stopped by an error, before `flush`) are
-    /// drained before the session frees their buffers: the driver finishes them asynchronously,
-    /// and freeing their buffers first made it jump into freed memory (a crash in the driver as
-    /// the export's encoder was dropped, 2026-10-22).
+    /// waited for before the session frees their buffers: the driver finishes them asynchronously,
+    /// and freeing their buffers first made it jump into freed memory (#1582). Every slot is read,
+    /// whatever happened to the others; the packets are not needed. When the driver did not confirm
+    /// them all, the session leaves its buffers and encoder to the driver rather than freeing ones
+    /// that may still be in use.
     fn drop(&mut self) {
-        if !self.pending.is_empty()
-            && let Err(e) = self.flush()
-        {
-            log::warn!("NVENC: draining the pictures in flight failed: {e}");
+        if self.pending.is_empty() {
+            return;
+        }
+        // without end of stream, pictures held for reordering never finish: reading them would wait forever
+        let mut drained = match self.session.end_of_stream() {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!("NVENC: ending the stream of a dropped encoder failed: {e}");
+                false
+            }
+        };
+        if drained {
+            for slot in std::mem::take(&mut self.pending) {
+                if let Err(e) = self.session.read(slot) {
+                    log::warn!("NVENC: a picture in flight did not finish: {e}");
+                    drained = false;
+                }
+            }
+        }
+        if !drained {
+            self.session.abandon();
         }
     }
 }

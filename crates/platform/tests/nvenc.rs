@@ -110,17 +110,16 @@ fn the_stream_decodes_to_the_source() {
 /// into, and the process crashed (SIGSEGV in libnvidia-encode / libnvcuvid) as the encoder was dropped.
 #[test]
 fn an_encoder_dropped_with_pictures_in_flight_does_not_crash() {
+    if !filmcraft_platform::nvenc::available() {
+        eprintln!("SKIPPED: no NVENC");
+        return;
+    }
     let cfg = config(1280, 720);
     let (w, h) = (cfg.width as usize, cfg.height as usize);
     let (mut y, mut u, mut v) = (Vec::new(), Vec::new(), Vec::new());
     for round in 0..20 {
-        let mut enc = match NvencH264::new(&cfg) {
-            Ok(e) => e,
-            Err(why) => {
-                eprintln!("SKIPPED: {why}");
-                return;
-            }
-        };
+        // NVENC is there: an encoder it refuses would leave the drop path untested
+        let mut enc = NvencH264::new(&cfg).unwrap();
         for i in 0..8 {
             filmcraft_export::rgba_to_yuv420_8(&rgba(w, h, round * 8 + i), w, h, &mut y, &mut u, &mut v);
             let _ = enc.encode(&y, &u, &v, i as u64).unwrap();
