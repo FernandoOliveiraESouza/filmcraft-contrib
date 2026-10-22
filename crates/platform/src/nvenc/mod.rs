@@ -460,9 +460,16 @@ impl Nvenc {
     fn read_oldest(&mut self) -> Result<Packet, String> {
         let slot = self.pending.pop_front().ok_or("no picture in flight")?;
         self.ready = self.ready.saturating_sub(1);
-        let r = self.session.read(slot);
+        // a slot the driver did not give back may still be encoding: it is not reused, and the
+        // session will not free it (nor `Drop` find it among the pending ones)
+        let o = match self.session.read(slot) {
+            Ok(o) => o,
+            Err(e) => {
+                self.session.abandon();
+                return Err(e);
+            }
+        };
         self.free.push(slot);
-        let o = r?;
         let data = annex_b_to_length_prefixed_for(self.codec, &o.data)?;
         let k = self.emitted;
         self.emitted = self.emitted.saturating_add(1);
